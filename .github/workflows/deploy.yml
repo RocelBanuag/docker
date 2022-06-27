@@ -1,0 +1,102 @@
+# This is a basic workflow to help you get started with Actions
+
+name: CI
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the master branch
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+
+      # Runs a single command using the runners shell
+      - name: Composer validate/update
+        run: |
+          curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php
+          composer update
+          
+      - name: Directory Permissions
+        run: chmod -R 777 ./    
+          
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-northeast-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Building Php
+        id: build-php
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: app1
+          IMAGE_TAG: latest
+        run: |
+          docker build -t rab .
+          docker tag app1:latest $ECR_REGISTRY/app1:$IMAGE_TAG
+          docker push $ECR_REGISTRY/app1:$IMAGE_TAG
+        
+
+      - name: Building Nginx
+        id: build-nginx
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: nginx1
+          IMAGE_TAG: latest
+        run: |
+          docker build -f Dockerfile_Nginx -t nginx .
+          docker tag nginx1:latest $ECR_REGISTRY/nginx1:$IMAGE_TAG
+          docker push $ECR_REGISTRY/nginx1:$IMAGE_TAG
+
+      # Runs a single command using the runners shell
+      - name: Print the image name
+        run: |
+          echo the images are
+          echo ${{ steps.build-image.outputs.appimage }}
+          echo ${{ steps.build-image.outputs.webimage }}
+      - name: Download task definition
+        run: |
+          aws ecs describe-task-definition --task-definition lara-task --query taskDefinition > task-definition.json    
+      - name: Fill in the new app image ID in the Amazon ECS task definition
+        id: app-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: app
+          image: 876828831662.dkr.ecr.ap-northeast-1.amazonaws.com/app1:latest
+
+      - name: Fill in the new nginx image ID in the Amazon ECS task definition
+        id: web-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ steps.app-task-def.outputs.task-definition }}
+          container-name: nginx
+          image: 876828831662.dkr.ecr.ap-northeast-1.amazonaws.com/nginx1:latest
+
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: rabTD
+          service: lara-service
+          cluster: lara-cluster
+          wait-for-service-stability: true
