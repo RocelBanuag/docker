@@ -30,7 +30,7 @@ services:
     image: mysql:8.0.28
     container_name: db
     environment:
-      MYSQL_DATABASE: raedb
+      MYSQL_DATABASE: radb
       MYSQL_ROOT_PASSWORD: "123123123"
     volumes:
       - dbdata:/var/lib/mysql/
